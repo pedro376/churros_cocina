@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/bambino/Documentos/churros/cocina/churros_cocina/build/linux/x64/debug/cmake_install.cmake",
+		"/home/bambino/Documentos/churros/cocina/churros_cocina/build/linux/x64/debug/flutter/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
