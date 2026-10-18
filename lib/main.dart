@@ -5,6 +5,7 @@ import 'server/server.dart';
 import 'dart:io';
 import 'package:intl/intl.dart';
 import 'package:excel/excel.dart';
+import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -140,6 +141,8 @@ class _CocinaPageState extends State<CocinaPage> {
       setState(() {
         ordenes.add(orden);
       });
+      FlutterRingtonePlayer().playNotification();
+      HapticFeedback.vibrate();
     });
   }
 
