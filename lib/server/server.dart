@@ -5,8 +5,21 @@ class CocinaServer {
   static final List<Function(Map<String, dynamic>)> _listeners = [];
   static String? serverIP;
 
+  /// Lo registra la pantalla de cocina. Recibe la corrección de un pedido y
+  /// devuelve true si encontró el pedido (por su 'id') y lo reemplazó.
+  static bool Function(Map<String, dynamic>)? _onEditar;
+  static List<String> Function()? _idsActivos;
+
+  static void setActiveIdsProvider(List<String> Function() provider) {
+    _idsActivos = provider;
+  }
+
   static void addListener(Function(Map<String, dynamic>) listener) {
     _listeners.add(listener);
+  }
+
+  static void setEditHandler(bool Function(Map<String, dynamic>) handler) {
+    _onEditar = handler;
   }
 
   static Future<void> start() async {
@@ -45,22 +58,55 @@ class CocinaServer {
     await _mostrarTodasLasIPs();
 
     await for (HttpRequest request in server) {
-      if (request.method == 'POST' && request.uri.path == '/orden') {
-        final content = await utf8.decoder.bind(request).join();
-        final data = jsonDecode(content);
+      // try/catch por petición: un JSON mal formado ya no tira el servidor
+      try {
+        if (request.method == 'POST' && request.uri.path == '/orden') {
+          final content = await utf8.decoder.bind(request).join();
+          final data = jsonDecode(content) as Map<String, dynamic>;
 
-        for (var l in _listeners) {
-          l(data);
+          for (var l in _listeners) {
+            l(data);
+          }
+
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..write('Orden recibida');
+          await request.response.close();
+        } else if (request.method == 'POST' &&
+            request.uri.path == '/orden/editar') {
+          final content = await utf8.decoder.bind(request).join();
+          final data = jsonDecode(content) as Map<String, dynamic>;
+
+          final encontrada = _onEditar != null && _onEditar!(data);
+
+          if (encontrada) {
+            request.response
+              ..statusCode = HttpStatus.ok
+              ..write('Orden actualizada');
+          } else {
+            request.response
+              ..statusCode = HttpStatus.notFound
+              ..write('Orden no encontrada');
+          }
+          await request.response.close();
+        } else if (request.method == 'GET' &&
+            request.uri.path == '/ordenes/activas') {
+          final ids = _idsActivos?.call() ?? <String>[];
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({'ids': ids}));
+          await request.response.close();
+        } else {
+          request.response.statusCode = HttpStatus.notFound;
+          await request.response.close();
         }
-
-        request.response
-          ..statusCode = HttpStatus.ok
-          ..write('Orden recibida')
-          ..close();
-      } else {
-        request.response
-          ..statusCode = HttpStatus.notFound
-          ..close();
+      } catch (e) {
+        print('❌ Error atendiendo petición: $e');
+        try {
+          request.response.statusCode = HttpStatus.badRequest;
+          await request.response.close();
+        } catch (_) {}
       }
     }
   }

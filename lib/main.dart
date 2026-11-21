@@ -6,10 +6,12 @@ import 'dart:io';
 import 'package:intl/intl.dart';
 import 'package:excel/excel.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
+import 'dart:isolate';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  await WakelockPlus.enable();
   await _solicitarPermisos();
 
   CocinaServer.start();
@@ -30,8 +32,9 @@ Future<void> _solicitarPermisos() async {
 Future<void> _colaGuardadoExcel = Future.value();
 
 Future<void> guardarVentaExcel(Map<String, dynamic> orden) {
-  _colaGuardadoExcel =
-      _colaGuardadoExcel.then((_) => _guardarVentaExcelInterno(orden));
+  _colaGuardadoExcel = _colaGuardadoExcel
+      .then((_) => Isolate.run(() => _guardarVentaExcelInterno(orden)))
+      .catchError((e) => debugPrint('❌ Error en cola Excel: $e'));
   return _colaGuardadoExcel;
 }
 
@@ -138,12 +141,41 @@ class _CocinaPageState extends State<CocinaPage> {
     _cargarIP();
 
     CocinaServer.addListener((orden) {
+      // Si mesero reintenta un envío que ya llegó, no se duplica el pedido
+      final id = orden['id']?.toString();
+      if (id != null && ordenes.any((o) => o['id']?.toString() == id)) {
+        return;
+      }
+
       setState(() {
         ordenes.add(orden);
       });
       FlutterRingtonePlayer().playNotification();
       HapticFeedback.vibrate();
     });
+
+    // Corrección enviada desde mesero: reemplaza el pedido con el mismo id.
+    // Devuelve false si ya no está (lo completaron o cancelaron).
+    CocinaServer.setEditHandler((nueva) {
+      final id = nueva['id']?.toString();
+      if (id == null) return false;
+
+      final i = ordenes.indexWhere((o) => o['id']?.toString() == id);
+      if (i < 0) return false;
+
+      setState(() {
+        nueva['editada'] = true;
+        ordenes[i] = nueva;
+      });
+      FlutterRingtonePlayer().playNotification();
+      HapticFeedback.vibrate();
+      return true;
+    });
+
+    CocinaServer.setActiveIdsProvider(() => ordenes
+        .map((o) => o['id']?.toString() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList());
   }
 
   void _cargarIP() {
@@ -237,24 +269,19 @@ class _CocinaPageState extends State<CocinaPage> {
     });
   }
 
-  Future<void> _completarOrden(int index) async {
+  void _completarOrden(int index) {
     final orden = ordenes[index];
+    setState(() => ordenes.removeAt(index));
 
-    await guardarVentaExcel(orden);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('✅ Orden completada'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 2),
+      ),
+    );
 
-    setState(() {
-      ordenes.removeAt(index);
-    });
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ Orden completada y guardada'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
+    guardarVentaExcel(orden); // se guarda en segundo plano
   }
 
   @override
@@ -325,12 +352,35 @@ class _CocinaPageState extends State<CocinaPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            esActiva ? 'ORDEN ACTIVA' : 'PENDIENTE',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          Row(
+                            children: [
+                              Text(
+                                esActiva ? 'ORDEN ACTIVA' : 'PENDIENTE',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (orden['editada'] == true) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Text(
+                                    'EDITADO',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                           const SizedBox(height: 10),
                           ...items.map((item) => Padding(
